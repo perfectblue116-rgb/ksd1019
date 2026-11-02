@@ -84,6 +84,12 @@ label.b{display:inline-flex;gap:5px;align-items:center}
 .dghint.nx{right:14px}.dghint.pv{left:14px}
 .dghint.on{opacity:1;transform:scale(1.12)}
 .tx:empty:before{content:"タップして記入";color:#b4bcc5}
+.insb.tb{padding:3px 9px;font-weight:700}
+.insb.tb.dj{border-color:#00a040;color:#00a040}
+#tclip{position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;display:none;align-items:center;gap:8px;max-width:92vw;background:#1f6feb;color:#fff;border-radius:999px;padding:6px 8px 6px 14px;font-size:13px;box-shadow:0 4px 14px #0005}
+#tclip.show{display:flex}
+#tclip span{max-width:56vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#tclip button{background:#ffffff33;color:#fff;border:0;border-radius:999px;padding:4px 12px}
 .pn{position:absolute;left:0;width:595px;text-align:center;top:803px;font-size:11px}
 #sp{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--bar);border-top:1px solid var(--bd);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));display:none;gap:10px;flex-wrap:wrap;align-items:center}
 #sp.show{display:flex}
@@ -353,7 +359,7 @@ function coverEl(){
 }
 function render(){
  const L=LAY[layout],host=$('#pages');host.innerHTML='';
- const SPREAD=paged(),VN=viewN();fit();const nsp=Math.ceil(pages.length/VN);spIdx=Math.max(0,Math.min(spIdx,nsp-1));const wraps=[];
+ updClip();const SPREAD=paged(),VN=viewN();fit();const nsp=Math.ceil(pages.length/VN);spIdx=Math.max(0,Math.min(spIdx,nsp-1));const wraps=[];
  if(cover.on)host.appendChild(coverEl());
  pages.forEach((pg,pi)=>{
   if(SPREAD&&Math.floor(pi/VN)!==spIdx)return;
@@ -386,6 +392,9 @@ function render(){
    tx.addEventListener('contextmenu',e=>e.preventDefault());
    tx.addEventListener('click',()=>{if(Date.now()<tsup)return;openText(slot)});
    el.appendChild(tx);
+   {let bx=t.x;const mk=(label,cls,fn,title)=>{const b=document.createElement('button');b.type='button';b.className='insb tb '+cls;b.textContent=label;b.title=title;Object.assign(b.style,{left:bx+'px',top:(t.y-26)+'px'});b.onpointerdown=ev=>ev.stopPropagation();b.onclick=ev=>{ev.stopPropagation();fn()};el.appendChild(b);bx+=label.length*12+26};
+    if(!slot.text)mk('同上','dj',()=>setDojo(slot),'「同　上」を自動入力');
+    if(tclip!==null&&tclip!==slot.text)mk('貼付','ps',()=>pasteTo(slot),'コピーした文を貼り付け')}
    if(slot.text){const xd=document.createElement('button');xd.className='xd';xd.textContent='×';xd.title='この文を削除';
     Object.assign(xd.style,{left:(t.x+t.w-24)+'px',top:(t.y-26)+'px'});
     xd.onclick=ev=>{ev.stopPropagation();slot.text='';render();toast('文を削除しました')};el.appendChild(xd)}
@@ -440,10 +449,18 @@ function openFrame(slot){
  if(slot.img)$('#m3').onclick=()=>{slot.img=slot.el=null;closeModal();render()};
  $('#m4').onclick=closeModal;
 }
+const DOJO='同　上';let tclip=null;
+function updClip(){let b=document.getElementById('tclip');
+ if(!b){b=document.createElement('div');b.id='tclip';b.innerHTML='<span></span><button type="button">終了</button>';document.body.appendChild(b);b.querySelector('button').onclick=()=>{tclip=null;render();toast('貼り付けモードを終了しました')}}
+ b.classList.toggle('show',tclip!==null);if(tclip!==null)b.firstChild.textContent='コピー中：'+tclip.replace(/\n/g,' ')}
+function setDojo(slot){slot.text=DOJO;render();toast('「同　上」を入力しました')}
+function pasteTo(slot){if(tclip===null)return;slot.text=tclip;render();toast('貼り付けました')}
 function openText(slot){
- modal(`<textarea id="ta" placeholder="工事内容を入力（自動で改行されます）"></textarea><div class="row"><button id="ok" class="p">完了</button>${slot.text?'<button id="tdel">この文を削除</button>':''}</div>`);
+ modal(`<textarea id="ta" placeholder="工事内容を入力（自動で改行されます）"></textarea><div class="row"><button id="mdj" type="button">同　上</button>${tclip!==null?'<button id="mps" type="button">貼り付け</button>':''}</div><div class="row"><button id="ok" class="p">完了</button>${slot.text?'<button id="tdel">この文を削除</button>':''}</div>`);
  const ta=$('#ta');ta.value=slot.text;setTimeout(()=>ta.focus(),50);
  $('#ok').onclick=()=>{slot.text=ta.value;closeModal();render()};
+ $('#mdj').onclick=()=>{slot.text=DOJO;closeModal();render();toast('「同　上」を入力しました')};
+ if(tclip!==null)$('#mps').onclick=()=>{ta.value=tclip;ta.focus()};
  if(slot.text)$('#tdel').onclick=()=>{slot.text='';closeModal();render()};
 }
 function openCover(){
@@ -615,7 +632,9 @@ addEventListener('pointerup',e=>{
   if(r&&r.s!==p.slot){
    if(pageIdxOf(p.slot)!==pageIdxOf(r.s)){const ins=!!r.s.text;moveText(p.slot,r.s);render();toast(ins?'文を挿入しました（間の文を1枠ずつずらしました）':'文を移動しました')}
    else{r.s.text=p.slot.text;render();toast('文をコピーしました')}
-  }}
+  }
+  else if(!hot&&p.slot.text){tclip=p.slot.text;try{navigator.clipboard&&navigator.clipboard.writeText(tclip)}catch(x){}render();toast('コピーしました。貼り付けたい欄の「貼付」を押してください')}
+ }
 });
 addEventListener('pointercancel',()=>{if(tp){clearTimeout(tp.timer);tp=null}tdClean()});
 
