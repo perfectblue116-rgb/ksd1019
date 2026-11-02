@@ -483,10 +483,15 @@ function beginPD(){
  try{navigator.vibrate&&navigator.vibrate(15)}catch(x){}
  dgBegin(fp.tt,fp.x,fp.y);
 }
+function hitEl(x,y,sel,pad){
+ for(const e of document.elementsFromPoint(x,y)){const m=e.closest&&e.closest(sel);if(m)return m}
+ if(!pad)return null;let best=null,bd=1e9;
+ document.querySelectorAll(sel).forEach(m=>{const r=m.getBoundingClientRect();
+  if(x>=r.left-pad&&x<=r.right+pad&&y>=r.top-pad&&y<=r.bottom+pad){const d=Math.hypot(x-(r.left+r.right)/2,y-(r.top+r.bottom)/2);if(d<bd){bd=d;best=m}}});
+ return best;
+}
 function pdTarget(x,y){
- if(pghost)pghost.style.display='none';
- const el=document.elementFromPoint(x,y);if(pghost)pghost.style.display='';
- const f=el&&el.closest&&el.closest('.fr');if(!f)return null;
+ const f=hitEl(x,y,'.fr',24);if(!f)return null;
  const pg=pages[+f.dataset.pi],sl=pg&&pg.slots[+f.dataset.si];return sl?{f,s:sl}:null;
 }
 function pdClean(){dgEnd();if(pghost){pghost.remove();pghost=null}document.querySelectorAll('.fr.tgt').forEach(x=>x.classList.remove('tgt'))}
@@ -536,13 +541,21 @@ function moveText(a,b){
 /* ---------- drag: 画面右下/左下で自動ページ送り ---------- */
 let dg=null;
 function dgCan(d){const n=Math.ceil(pages.length/viewN());return paged()&&spIdx+d>=0&&spIdx+d<n}
+function dgOverTarget(x,y){
+ const sel=fp&&fp.drag?'.fr':tp&&tp.drag?'.tx':null;if(!sel)return false;
+ const src=fp&&fp.drag?fp.slot:tp&&tp.drag?tp.slot:null;
+ for(const e of document.elementsFromPoint(x,y)){const m=e.closest&&e.closest(sel);if(!m)continue;
+  const pg=pages[+m.dataset.pi],sl=pg&&pg.slots[+m.dataset.si];if(sl&&sl!==src)return true}
+ return false;
+}
 function dgZone(x,y){
  const W=innerWidth,H=innerHeight;
+ if(dgOverTarget(x,y))return 0;
  for(const d of[1,-1]){
   if(!dgCan(d))continue;
-  if(y>=H-140&&(d>0?x>=W-130:x<=130))return d;
+  if(y>=H-100&&(d>0?x>=W-100:x<=100))return d;
   const c=document.querySelector('.curl.'+(d>0?'nx':'pv'));
-  if(c){const r=c.getBoundingClientRect();if(x>=r.left-30&&x<=r.right+30&&y>=r.top-30&&y<=r.bottom+30)return d}
+  if(c){const r=c.getBoundingClientRect();if(x>=r.left-10&&x<=r.right+10&&y>=r.top-10&&y<=r.bottom+10)return d}
  }
  return 0;
 }
@@ -570,9 +583,9 @@ function dgMove(x,y){
   const fire=()=>{
    if(!dg||dg.zone!==z||!dgCan(z))return;
    dgFlip(z);
-   if(dg&&dgCan(z))dg.timer=setTimeout(fire,900);
+   if(dg&&dgCan(z))dg.timer=setTimeout(fire,1000);
   };
-  dg.timer=setTimeout(fire,450);
+  dg.timer=setTimeout(fire,700);
  }
 }
 function dgFlip(d){
@@ -607,9 +620,7 @@ function beginTD(){
  dgBegin(tp.tt,tp.x,tp.y);
 }
 function tdTarget(x,y){
- if(tghost)tghost.style.display='none';
- const el=document.elementFromPoint(x,y);if(tghost)tghost.style.display='';
- const t=el&&el.closest&&el.closest('.tx');if(!t)return null;
+ const t=hitEl(x,y,'.tx',16);if(!t)return null;
  const pg=pages[+t.dataset.pi],sl=pg&&pg.slots[+t.dataset.si];return sl?{t,s:sl}:null;
 }
 function tdClean(){dgEnd();if(tghost){tghost.remove();tghost=null}document.querySelectorAll('.tx.tgt').forEach(x=>x.classList.remove('tgt'))}
