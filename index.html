@@ -99,7 +99,7 @@ label.b{display:inline-flex;gap:5px;align-items:center}
 .cc.on{border-color:var(--fg);outline:2px solid var(--ac)}
 #mod{position:fixed;inset:0;z-index:50;background:#0007;display:none;align-items:center;justify-content:center;padding:16px}
 #mod.show{display:flex}
-#sheet{background:var(--bar);width:min(440px,100%);max-height:90%;overflow:auto;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px;box-shadow:0 8px 30px #0006}
+#sheet{background:var(--bar);width:min(440px,100%);max-height:90%;overflow:auto;overscroll-behavior:contain;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px;box-shadow:0 8px 30px #0006}
 #sheet button{padding:12px;font-size:16px}
 #sheet input{font:16px/1.4 inherit;width:100%;border:1px solid var(--bd);border-radius:8px;padding:9px;background:var(--bg);color:var(--fg)}
 #sheet label{font-size:13px;color:var(--mut);display:flex;flex-direction:column;gap:4px}
@@ -1133,6 +1133,30 @@ pgEl.addEventListener('touchstart',e=>{
 pgEl.addEventListener('touchmove',e=>{if(!pz||e.touches.length!==2)return;e.preventDefault();setZoom(pz.z*tdist(e.touches)/pz.d,pz.mx,pz.my)},{passive:false});
 pgEl.addEventListener('touchend',e=>{if(e.touches.length<2)pz=null});
 pgEl.addEventListener('touchcancel',()=>{pz=null});
+/* ---------- 入力画面（モーダル）のピンチ拡大 ---------- */
+let sz=1,szKeep=1,spz=null;
+const mdEl=$('#mod'),shEl=$('#sheet');
+const sheetHasInput=()=>!!shEl.querySelector('textarea,input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file])');
+function applySheetZoom(z){
+ sz=z;shEl.style.zoom=z===1?'':z;
+ if(z===1){shEl.style.width='';shEl.style.maxHeight=''}
+ else{ /* zoom下でも画面からはみ出さないよう、幅・高さをpxで指定 */
+  const cw=mdEl.clientWidth-32,ch=(mdEl.clientHeight-32)*.9;
+  shEl.style.width=Math.min(440*z,cw)/z+'px';shEl.style.maxHeight=(ch/z)+'px';
+ }
+}
+function sheetZoom(z){
+ z=Math.max(1,Math.min(2.5,Math.round(z*100)/100));if(z===sz)return;
+ const r=shEl.scrollHeight?shEl.scrollTop/shEl.scrollHeight:0;
+ applySheetZoom(z);if(sheetHasInput())szKeep=z;
+ shEl.scrollTop=r*shEl.scrollHeight;
+}
+{const _m=modal;modal=function(html){_m(html);applySheetZoom(sheetHasInput()?szKeep:1)}}
+mdEl.addEventListener('touchstart',e=>{if(e.touches.length===2)spz={d:tdist(e.touches),z:sz}},{passive:true});
+mdEl.addEventListener('touchmove',e=>{if(!spz||e.touches.length!==2)return;e.preventDefault();sheetZoom(spz.z*tdist(e.touches)/spz.d)},{passive:false});
+mdEl.addEventListener('touchend',e=>{if(e.touches.length<2)spz=null});
+mdEl.addEventListener('touchcancel',()=>{spz=null});
+addEventListener('resize',()=>{if(sz>1)applySheetZoom(sz)});
 /* ---------- 保存（自動保存／現場ごとの保存・再編集） ---------- */
 {const _r=render;render=function(){_r();scheduleSave()}}
 const newId=()=>'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
