@@ -180,6 +180,9 @@ html.authlock #authGate{display:flex;position:fixed;inset:0;z-index:9999;backgro
  #bar .hint{display:none}
  #bar #act{display:none}
 }
+#repf{display:none;gap:8px;flex-wrap:wrap;align-items:center;width:100%;padding-top:2px}#repf.show{display:flex}
+#sheet .mt{display:grid;grid-template-columns:1fr 1fr;gap:6px}#sheet .mt label{flex-direction:row;align-items:center;gap:6px;color:var(--fg);font-size:14px}#sheet .mt input{width:auto}
+#sheet textarea{resize:vertical}
 </style>
 </head>
 <body>
@@ -229,7 +232,10 @@ html.authlock #authGate{display:flex;position:fixed;inset:0;z-index:9999;backgro
       <label class="fld"><em>表示方法</em><select id="view" title="表示方法"><option value="1">1ページ表示</option><option value="2">2ページ見開き</option></select></label>
       <label class="chk"><input type="checkbox" id="pnum" checked><i></i><span>ページ番号</span></label>
       <label class="chk"><input type="checkbox" id="cov"><i></i><span>表紙をつける</span></label>
+      <label class="chk"><input type="checkbox" id="rep"><i></i><span>現地調査報告書をつける</span></label>
       <div id="covf"><input id="cname" placeholder="工事名（例：〇〇〇〇〇改修工事）"><label class="fld"><em>提出日</em><input type="date" id="cdate"></label></div>
+      <div id="repf"><button type="button" class="tool" id="repEdit">報告書の内容を入力</button><label class="fld"><em>報告日</em><input type="date" id="rdate"></label></div>
+      <button type="button" class="tool" id="cacheClean" title="不要な写真データを整理して端末の容量を空けます">🧹 キャッシュ整理</button>
     </div>
   </div>
   <div id="act">空の枠をタップで写真を追加。写真入りの枠はタップで選択（図形・文字を追加できます／何も選ばなくても追加可）。「差替」で写真を差し替え、「＋挿入」で前に写真を挿入、「空白挿入」で前に空白枠を挿入。空白枠の「空白削除」で詰める。写真・記入文はドラッグ（スマホ／iPadは長押し）で入れ替え／コピー、右上の×で削除。</div>
@@ -348,7 +354,7 @@ function coverTexts(){
  return{t,d,fs};
 }
 function updateCover(){
- scheduleSave();updProjUI();
+ repRedraw();scheduleSave();updProjUI();
  const T=$('#covT'),D=$('#covD');if(!T)return;const c=coverTexts();
  T.textContent=c.t;T.style.fontSize=c.fs+'px';D.textContent=c.d;
 }
@@ -361,6 +367,7 @@ function render(){
  const L=LAY[layout],host=$('#pages');host.innerHTML='';
  updClip();const SPREAD=paged(),VN=viewN();fit();const nsp=Math.ceil(pages.length/VN);spIdx=Math.max(0,Math.min(spIdx,nsp-1));const wraps=[];
  if(cover.on)host.appendChild(coverEl());
+ if(rep.on)host.appendChild(repEl());
  pages.forEach((pg,pi)=>{
   if(SPREAD&&Math.floor(pi/VN)!==spIdx)return;
   const wr=document.createElement('div');wr.className='wrap';
@@ -438,7 +445,7 @@ addEventListener('keydown',e=>{
 
 /* ---------- modal ---------- */
 function modal(html){$('#sheet').innerHTML=html;$('#mod').classList.add('show')}
-function closeModal(){$('#mod').classList.remove('show')}
+function closeModal(){$('#mod').classList.remove('show');$('#sheet').oninput=null;$('#sheet').onclick=null}
 $('#mod').addEventListener('click',e=>{if(e.target.id==='mod')closeModal()});
 function pickPhoto(slot){render();tgt=slot;$('#fLib').click()}
 function openFrame(slot){
@@ -466,7 +473,181 @@ function openText(slot){
 function openCover(){
  modal(`<label>工事名<input id="cn" placeholder="工事名（例：〇〇〇〇〇改修工事）"></label><label>提出日<input type="date" id="cd"></label><button id="ok" class="p">完了</button>`);
  const cn=$('#cn'),cd=$('#cd');cn.value=cover.name;cd.value=cover.date||'';setTimeout(()=>cn.focus(),50);
- $('#ok').onclick=()=>{cover.name=cn.value;cover.date=cd.value;$('#cname').value=cover.name;$('#cdate').value=cover.date;closeModal();updateCover()};
+ $('#ok').onclick=()=>{closeModal();setDate(cd.value);setSite(cn.value)};
+}
+
+/* ========== 現地調査報告書 ========== */
+const REP_MT=['目視','スケール','レーザー測定器','打診棒','水分計','ファイバースコープ','レーザーレベル','オートレベル','トータルステーション','ドローン'];
+/* AI校正の接続先（任意）。POST {prompt,text} → {a:"案1",b:"案2"} を返すAPI(例：Cloud Functions)のURLを入れる。空欄なら簡易校正で動作 */
+const AI_ENDPOINT='';
+const defRep=()=>({on:false,addr:'',sdate:'',staff:['','',''],vend:[{c:'',n:''}],mt:[],mx:'',ov:'',res:'',ana:''});
+const rep=defRep();
+function repSet(d){const b=defRep();if(d&&typeof d==='object')Object.assign(b,d);b.staff=[0,1,2].map(i=>String((b.staff||[])[i]||''));b.vend=(Array.isArray(b.vend)?b.vend:[]).map(v=>({c:String(v.c||''),n:String(v.n||'')}));if(!b.vend.length)b.vend=[{c:'',n:''}];b.mt=Array.isArray(b.mt)?b.mt:[];Object.keys(b).forEach(k=>rep[k]=b[k])}
+const fmtJ=s=>{const m=(s||'').match(/^(\d+)-(\d+)-(\d+)$/);return m?(+m[1])+'年'+(+m[2])+'月'+(+m[3])+'日':''};
+/* 現場名・日付のリンク（現場名＝表紙の工事名＝報告書の案件名／提出日＝報告日） */
+function setSite(v){projName=v;cover.name=v;[['#cname'],['#r_name']].forEach(([s])=>{const e=$(s);if(e&&e.value!==v)e.value=v});updateCover()}
+function setDate(v){cover.date=v;['#cdate','#rdate','#r_date'].forEach(s=>{const e=$(s);if(e&&e.value!==v)e.value=v});updateCover()}
+function repStaffToks(){const st=rep.staff.map(s=>s.trim()).filter(Boolean),t=['エステート住宅産業㈱'+(st.length?' '+st[0]:'')];st.slice(1).forEach(s=>t.push(s));rep.vend.forEach(v=>{const x=[v.c.trim(),v.n.trim()].filter(Boolean).join(' ');if(x)t.push(x)});return t}
+function repMtToks(){return[...REP_MT.filter(x=>rep.mt.includes(x)),...rep.mx.split(/[、,，\n]+/).map(s=>s.trim()).filter(Boolean)]}
+/* 区切りのいい所（「、」の後ろ）で改行 */
+function wrapToks(ctx,toks,maxW){const L=[];let cur='';toks.forEach((t,i)=>{const tt=t+(i<toks.length-1?'、':'');if(cur&&ctx.measureText(cur+tt).width>maxW){L.push(cur);cur=tt}else cur+=tt});if(cur)L.push(cur);return L.length?L:['']}
+let repHit=[];
+function repDraw(ctx,k,ui){
+ const X0=54.8,X1=558.2,XL=144.5,TW=X1-XL-8,P=13,F='11px '+FONT,G='#d9d9d9',HC='#b4bcc5';
+ ctx.setTransform(k,0,0,k,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,595,842);
+ ctx.font=F;ctx.textBaseline='middle';ctx.textAlign='left';
+ const wt=t=>wrapToks(ctx,t,TW).flatMap(l=>wrap(ctx,l,TW));
+ const rows=[['案件名',wrap(ctx,dispName(),TW),'name','現場名を入力'],['住所',wrap(ctx,rep.addr,TW),'addr','タップして入力（地図からも指定できます）'],['調査日',[fmtJ(rep.sdate)],'sdate','タップして日付を選択'],['現地確認者',wt(repStaffToks()),'st',''],['調査方法など',wt(repMtToks()),'mt','タップして選択・入力'],['概要・目的',wrap(ctx,rep.ov,TW),'ov','タップして入力']];
+ const hh=rows.map((r,i)=>Math.max(i===5?36.4:18.4,r[1].length*P+5.4)),hits=[];
+ let y=104.8;const T1=y;
+ ctx.fillStyle=G;rows.forEach((r,i)=>{ctx.fillRect(X0,y,XL-X0,hh[i]);y+=hh[i]});const B=y;
+ ctx.strokeStyle='#000';ctx.lineWidth=.8;ctx.strokeRect(X0,T1,X1-X0,B-T1);
+ y=T1;rows.forEach((r,i)=>{if(i){ctx.beginPath();ctx.moveTo(X0,y);ctx.lineTo(X1,y);ctx.stroke()}y+=hh[i]});
+ ctx.beginPath();ctx.moveTo(XL,T1);ctx.lineTo(XL,B);ctx.stroke();
+ const sp=(s,cx,yy,W,fs)=>{const a=[...s],n=a.length,g=n>1?(W-fs*n)/(n-1):0;ctx.textAlign='center';a.forEach((c,i)=>ctx.fillText(c,cx-W/2+fs/2+i*(fs+g),yy));ctx.textAlign='left'};
+ y=T1;rows.forEach((r,i)=>{
+  const h=hh[i],n=r[1].length;ctx.font=F;ctx.fillStyle='#000';
+  sp(r[0],100.6,y+h/2+.5,Math.max(55,[...r[0]].length*11),11);
+  const empty=!r[1].join('');
+  r[1].forEach((l,j)=>{const ly=y+(h-n*P)/2+P/2+j*P+.5;if(empty){if(ui&&r[3]){ctx.fillStyle=HC;ctx.fillText(r[3],XL+4,ly);ctx.fillStyle='#000'}}else ctx.fillText(l,XL+4,ly)});
+  hits.push({k:r[2],y0:y,y1:y+h});y+=h;
+ });
+ const T2=B+37,R=802.8-T2-36,b1=R*.6295,b2=R-b1,Y1=T2+18,Y2=Y1+b1,Y3=Y2+18;
+ ctx.fillStyle=G;ctx.fillRect(X0,T2,X1-X0,18);ctx.fillRect(X0,Y2,X1-X0,18);
+ ctx.strokeStyle='#000';ctx.strokeRect(X0,T2,X1-X0,802.8-T2);
+ [Y1,Y2,Y3].forEach(v=>{ctx.beginPath();ctx.moveTo(X0,v);ctx.lineTo(X1,v);ctx.stroke()});
+ ctx.fillStyle='#000';ctx.font='16px '+FONT;
+ [...'現地調査報告書'].forEach((c,i)=>{ctx.textAlign='center';ctx.fillText(c,73.8+8+i*32.16,57.9)});
+ ctx.textAlign='left';ctx.font='11px '+FONT;
+ ctx.textAlign='right';const dj=fmtJ(cover.date);ctx.fillText('報告日：'+dj,X1,57.9);
+ if(ui&&!dj){ctx.fillStyle=HC;ctx.fillText('（タップして日付を入力）',X1-ctx.measureText('報告日：').width-2,57.9);ctx.fillStyle='#000'}
+ ctx.textAlign='left';ctx.font='12px '+FONT;
+ ctx.fillText('1）',57.2,96);ctx.fillText('概要',81.2,96);ctx.fillText('2）',57.2,B+28);ctx.fillText('報告事項',81.2,B+28);
+ ctx.font='11px '+FONT;sp('調査結果',307.2,T2+9.5,110.3,11);
+ ctx.textAlign='center';ctx.fillText('分　析・考　察・対応提案など',307.2,Y2+9.5);ctx.textAlign='left';
+ const body=(txt,y0,h,key)=>{
+  ctx.save();ctx.beginPath();ctx.rect(X0+1,y0+1,X1-X0-2,h-2);ctx.clip();
+  const w=X1-X0-14;let sz=11,ls;for(;sz>=7;sz-=.5){ctx.font=sz+'px '+FONT;ls=wrap(ctx,txt,w);if(ls.length*sz*1.5<=h-10)break}
+  if(!txt){if(ui){ctx.font='11px '+FONT;ctx.fillStyle=HC;ctx.fillText('タップして入力',X0+7,y0+12)}}
+  else{ctx.fillStyle='#000';ls.forEach((l,i)=>ctx.fillText(l,X0+7,y0+7+sz*.75+i*sz*1.5))}
+  ctx.restore();hits.push({k:key,y0,y1:y0+h});
+ };
+ body(rep.res,Y1,b1,'res');body(rep.ana,Y3,b2,'ana');
+ drawFooter(ctx);ctx.textBaseline='alphabetic';
+ if(ui)repHit=hits;
+}
+function repRedraw(){const c=$('#repC');if(c)repDraw(c.getContext('2d'),2,true);scheduleSave()}
+const REPKEY={name:'r_name',addr:'r_addr',sdate:'r_sdate',st:'st0',mt:'r_mx',ov:'tx_ov',res:'tx_res',ana:'tx_ana'};
+function repEl(){
+ const w=document.createElement('div');w.className='wrap';
+ w.innerHTML='<div class="ph"><span>現地調査報告書（各欄をタップして入力）</span><button type="button">入力画面を開く</button></div><div class="box"><div class="pg"><canvas id="repC" width="1190" height="1684" style="width:595px;height:842px;display:block;cursor:pointer"></canvas></div></div>';
+ setTimeout(()=>{
+  repRedraw();const c=w.querySelector('#repC');
+  c.onclick=e=>{const r=c.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*595,y=(e.clientY-r.top)/r.height*842;let f='r_name';
+   if(x>330&&y<80)f='r_date';else{const h=repHit.find(h=>y>=h.y0&&y<h.y1);if(h)f=REPKEY[h.k]}openRep(f)};
+  w.querySelector('.ph button').onclick=()=>openRep('r_name');
+ });return w;
+}
+/* ---------- AI校正 ---------- */
+function localProof(t,polite){
+ let s=t.replace(/[０-９Ａ-Ｚａ-ｚ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/，|,(?!\d)/g,'、').replace(/．/g,'。').replace(/[ \t　]{2,}/g,' ').replace(/[ \t]+$/gm,'').replace(/\n{3,}/g,'\n\n').replace(/([。、])\1+/g,'$1');
+ if(polite)s=s.replace(/である。/g,'です。').replace(/だ。/g,'です。').replace(/ない。/g,'ありません。').replace(/した。/g,'しました。').replace(/いる。/g,'います。').replace(/ある。/g,'あります。');
+ return s.split('\n').map(l=>l.trim()&&l.length>=8&&!/[。！？：:）)]$/.test(l)?l+'。':l).join('\n');
+}
+const AI_CTX={ov:'「概要・目的」欄。調査の背景と目的を簡潔に述べる文章。',res:'「調査結果」欄。見たこと・測ったことを客観的な事実として記す文章。事実と推測は区別し、推測表現（「思われる」「可能性がある」等）は強めも弱めもしない。',ana:'「分析・考察・対応提案など」欄。原因の考察と、対応の提案を述べる文章。提案の内容・優先度・断定の強さは変えない。'};
+const AI_TERMS='建築用語の例（正しい表記を保つ）：躯体、浮き、打診調査、ひび割れ（クラック）、爆裂、白華（エフロレッセンス）、防水層、立上り、笠木、目地、シーリング、下地、不陸、勾配、含水率、漏水、劣化、鉄部、塗膜、タイル、モルタル、ドレン、スラブ、梁、柱、開口部、サッシ';
+const numsOf=t=>(String(t).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/(\d),(?=\d{3})/g,'$1').match(/\d+(?:\.\d+)?/g)||[]).sort().join('|');
+function numWarn(o,t){return numsOf(o)===numsOf(t)?'':'<div style="font-size:12px;color:#d00;margin-bottom:6px">⚠ 数値（寸法・日付など）が元の文章と異なる可能性があります。採用前に確認してください。</div>'}
+async function aiProof(text,key){
+ const P='あなたは建築・設備分野の現地調査報告書を校正する、経験豊富な校正者です。\n'+(AI_CTX[key]||'')+'\n\n【厳守ルール】\n・お客様に提出する文書であることを前提にする。\n・書かれていない事実、原因、数値、固有名詞を追加しない。\n・数値、単位（㎜・㎡等）、日付、人名、会社名、部位名は一字も変えない。\n・段落・改行・番号付き箇条書きの構造は維持する。\n・意味が曖昧な箇所は推測で補わず、そのまま残す。\n・'+AI_TERMS+'\n\n【2つの案】\na：誤字脱字、変換ミス、助詞の誤り、表記ゆれ、句読点のみを最小限に直す。言い回しと文体は元のまま。\nb：aに加え、お客様に提出する報告書として自然な言い回しに整える。\n　- 文体は「です・ます調」を基本とし、かしこまりすぎない（「ございます」「〜させていただきます」「〜いたしております」の多用は避け、必要な箇所だけ丁寧語にする）。\n　- 口語・話し言葉（「ちょっと」「かなり」「〜みたいな」等）や、社内用語・略語は、お客様に伝わる一般的な表現に直す。\n　- 不具合や劣化は、事実は隠さず、責める・不安をあおる表現を避けた客観的で穏やかな言い方にする（例：「ひどい」→「進行が見られます」）。\n　- 一文を短く、主語と述語を明確にし、冗長・重複を整理する。\n　- 文量は元の80〜110%に収める。\n\n出力はJSONのみ（前置き・説明・コードブロック不要）：{"a":"案a全文","b":"案b全文"}\n\n【校正する文章】\n'+text;
+ const parse=s=>{const j=JSON.parse(String(s).replace(/```json|```/g,'').trim().replace(/^[^{]*/,'').replace(/[^}]*$/,''));if(!j.a||!j.b)throw 0;return j};
+ const T=ms=>new Promise((_,rj)=>setTimeout(rj,ms));
+ try{
+  if(window.claude&&typeof claude.complete==='function')return parse(await Promise.race([claude.complete(P),T(45000)]));
+  if(AI_ENDPOINT){const h={'Content-Type':'application/json'};try{h.Authorization='Bearer '+await firebase.auth().currentUser.getIdToken()}catch(x){}
+   const r=await Promise.race([fetch(AI_ENDPOINT,{method:'POST',headers:h,body:JSON.stringify({prompt:P,text,field:key,temperature:0.2})}),T(45000)]);if(!r.ok)throw 0;const j=await r.json();return j.a&&j.b?j:parse(j.text||j.content)}
+ }catch(x){}
+ return{a:localProof(text),b:localProof(text,1),note:'AIに接続できないため、簡易校正（機械的な置換）の結果です。'};
+}
+/* ---------- 入力画面 ---------- */
+const GEM_REQ='\n\nこの文章を顧客へ報告する現地報告書の報告内容として、かしこまりすぎない反映で対外的かつビジネスとしての言い回し(かつ、拝啓や弊社をご利用頂き誠に有難うございますなどは不要。内容からで良い)で校正ください。';
+function copySync(t){let ok=false;try{const a=document.createElement('textarea');a.value=t;a.setAttribute('readonly','');a.style.cssText='position:fixed;left:0;top:0;opacity:0;font-size:16px';document.body.appendChild(a);a.focus();a.select();a.setSelectionRange(0,t.length);ok=document.execCommand('copy');a.remove()}catch(x){}
+ if(!ok&&navigator.clipboard)try{navigator.clipboard.writeText(t);ok=true}catch(x){}return ok}
+/* ---------- 文章を構成（ビジネス表現への自動変換） ---------- */
+const BZ_W=[['ちょっと','やや'],['すこし','少し'],['とても','非常に'],['すごく','非常に'],['かなり','相当'],['だいぶ','相当'],['たくさん','多数'],['いっぱい','多数'],['いろいろ','様々'],['たぶん','おそらく'],['やっぱり','やはり'],['やっぱ','やはり'],['ぜんぶ','全て'],['すべて','全て'],['ほとんど','ほぼ'],['ちゃんと','適切に'],['きちんと','適切に'],['ひどい','顕著な'],['ひどく','顕著に'],['みたいな','のような'],['みたいに','のように'],['じゃない','ではない'],['じゃなく','ではなく'],['ですけど','ですが'],['ますけど','ますが'],['したほうがいい','することをお勧めします'],['した方がいい','することをお勧めします'],['したほうがよい','することをお勧めします'],['ほうがいい','ほうがよい'],['とくに','特に'],['おもに','主に'],['たとえば','例えば'],['すぐに','速やかに'],['はやめに','早めに'],['いまのところ','現時点では'],['ひとつ','一つ'],['ふたつ','二つ'],['みっつ','三つ'],['かしょ','箇所'],
+['おこなう','行う'],['おこなっ','行っ'],['おこない','行い'],['おこなわ','行わ'],['みつけた','発見した'],['みつかっ','確認され'],['みられ','見られ'],['こわれて','破損して'],['こわれた','破損した'],['こわれ','壊れ'],['はがれ','剥がれ'],['ひびわれ','ひび割れ'],['さびて','錆びて'],['さびが','錆が'],['ぬれて','濡れて'],['しめって','湿って'],['かわいて','乾いて'],['おもわれ','思われ'],['かんがえられ','考えられ'],['かんがえ','考え'],['おもいます','思います'],['わかりました','判明しました'],['わかった','判明した'],['わかり','分かり'],['しらべ','調べ'],['つかっ','使っ'],['してます','しています'],['してる','している'],['おねがい','お願い'],['おしらせ','お知らせ'],['ごらん','ご覧'],
+['かべ','壁'],['まど','窓'],['はしら','柱'],['ほかに','他に'],['ほかの','他の'],['ばしょ','場所'],['ぶぶん','部分'],['げんじょう','現状'],['げんば','現場'],['じょうたい','状態'],['ようす','様子'],['ばあい','場合'],['かのうせい','可能性'],['ひつよう','必要'],['たいおう','対応'],['かくにん','確認'],['ほしゅう','補修'],['ほうこく','報告'],['ちょうさ','調査'],['けっか','結果'],['げんいん','原因'],['もんだい','問題'],['ふぐあい','不具合'],['れっか','劣化'],['ろうすい','漏水'],['ぼうすい','防水'],['がいへき','外壁'],['やね','屋根'],['おくじょう','屋上'],['てんじょう','天井'],['はいかん','配管'],['せつび','設備'],['こうじ','工事'],['しゅうり','修理'],['こうかん','交換'],['てんけん','点検'],['かんさつ','観察'],['そくてい','測定'],['しんこう','進行'],['はっせい','発生'],['ふくらみ','膨らみ'],['ふくれ','膨れ'],['たいしょ','対処'],['かいしゅう','改修'],['ていあん','提案'],['けんとう','検討'],['ばくれつ','爆裂'],['はくか','白華'],['じゅうたく','住宅'],['こうぞう','構造'],['ざいりょう','材料'],['ひがい','被害'],['あんぜん','安全'],['きけん','危険'],['ちゅうい','注意'],['ふきん','付近'],['しゅうへん','周辺'],['ぜんたい','全体'],['いちぶ','一部'],['ぜんめん','全面'],['ぜんぱん','全般'],['げんかい','限界'],['ていど','程度'],['しょうじ','生じ'],['みられる','見られる']
+].sort((a,b)=>b[0].length-a[0].length);
+const BZ_S=[['だから','そのため'],['なので','そのため'],['だけど','しかし'],['でも','ただし'],['あと','また'],['それから','その後'],['なお','なお']];
+const BZ_E=[[/なかった。/g,'ありませんでした。'],[/できない。/g,'できません。'],[/ではない。/g,'ではありません。'],[/らない。/g,'りません。'],[/れない。/g,'れません。'],[/しない。/g,'しません。'],[/いない。/g,'いません。'],[/ない。/g,'ありません。'],[/であった。/g,'でした。'],[/だった。/g,'でした。'],[/である。/g,'です。'],[/だ。/g,'です。'],[/あった。/g,'ありました。'],[/なった。/g,'なりました。'],[/られた。/g,'られました。'],[/された。/g,'されました。'],[/できた。/g,'できました。'],[/いた。/g,'いました。'],[/(^|[^まで])した。/g,(m,q)=>q+'しました。'],[/いる。/g,'います。'],[/ある。/g,'あります。'],[/なる。/g,'なります。'],[/される。/g,'されます。'],[/できる。/g,'できます。']];
+function bizConv(src){
+ let s=String(src),n=0;const rp=(re,f)=>{s=s.replace(re,(...a)=>{n++;return typeof f==='function'?f(...a):f})};
+ s=s.replace(/[０-９Ａ-Ｚａ-ｚ]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/，|,(?!\d)/g,'、').replace(/．/g,'。').replace(/[!！]+/g,'。').replace(/[ \t　]{2,}/g,' ').replace(/[ \t]+$/gm,'').replace(/\n{3,}/g,'\n\n').replace(/([。、])\1+/g,'$1');
+ s=s.split('\n').map(l=>l.trim()&&l.length>=8&&!/[。？：:）)]$/.test(l)?l+'。':l).join('\n');
+ BZ_S.forEach(([a,b])=>{if(a!==b)rp(new RegExp('(^|[。？\\n])'+a+'(?=[、]|[^ぁ-ん])','g'),(m,p)=>p+b)});
+ BZ_W.forEach(([a,b])=>rp(new RegExp(a,'g'),b));
+ BZ_E.forEach(([re,b])=>rp(re,b));
+ return{t:s,n};
+}
+const qa=s=>esc(s).replace(/"/g,'&quot;');
+function openRep(f){
+ const mt=REP_MT.map(x=>`<label><input type="checkbox" data-mt="${x}"${rep.mt.includes(x)?' checked':''}>${x}</label>`).join('');
+ const vh=()=>rep.vend.map((v,i)=>`<div class="row"><input data-vc="${i}" placeholder="業者名（例：●●設備工業）" value="${qa(v.c)}"><input data-vn="${i}" placeholder="氏名" value="${qa(v.n)}" style="max-width:38%"></div>`).join('');
+ const ta=(k,t,h)=>`<label>${t}<textarea id="tx_${k}" data-tx="${k}" style="height:${h}px" placeholder="改行もそのまま反映されます"></textarea></label><button class="p" data-bz="${k}">✍ 文章を構成（ビジネス表現に自動変換）</button><div class="row"><button data-cp="${k}">📋 コピー</button><button data-gm="${k}">✨ コピーしてGeminiを開く</button><button data-pt="${k}">📥 貼り付け</button></div><button data-ai="${k}">AI校正（API接続時）</button><div id="ai_${k}"></div>`;
+ modal(`<div style="font-weight:700;font-size:16px">現地調査報告書</div>
+<label>報告日（表紙の提出日と連動）<input type="date" id="r_date"></label>
+<label>案件名（台帳の現場名と連動）<input id="r_name" placeholder="現場名"></label>
+<label>住所<input id="r_addr" placeholder="直接入力、または地図からコピーして貼り付け"></label>
+<div class="row"><button id="r_map">🗺 地図で指定</button><button id="r_paste">📋 貼り付け</button></div>
+<div id="r_mapbox" style="display:none"></div>
+<label>調査日<input type="date" id="r_sdate"></label>
+<div style="font-size:13px;color:var(--mut)">現地確認者（エステート住宅産業㈱ ＋ 社員3名まで）</div>
+<div class="row"><input id="st0" data-st="0" placeholder="社員1"><input data-st="1" placeholder="社員2"><input data-st="2" placeholder="社員3"></div>
+<div style="font-size:13px;color:var(--mut)">業者（会社名＋氏名）</div><div id="vbox">${vh()}</div>
+<div class="row"><button id="vadd">＋ 業者を追加</button><button id="vdel">－ 最後を削除</button></div>
+<div style="font-size:13px;color:var(--mut)">調査方法（複数選択）</div><div class="mt">${mt}</div>
+<label>その他の調査方法（直接入力・「、」区切り）<input id="r_mx" placeholder="例：赤外線カメラ"></label>
+${ta('ov','概要・目的',100)}${ta('res','調査結果',200)}${ta('ana','分析・考察・対応提案など',160)}
+<button id="r_ok" class="p">完了</button>`);
+ const S=$('#sheet');
+ S.querySelector('#r_date').value=cover.date||'';S.querySelector('#r_name').value=dispName();S.querySelector('#r_addr').value=rep.addr;S.querySelector('#r_sdate').value=rep.sdate;S.querySelector('#r_mx').value=rep.mx;
+ rep.staff.forEach((s,i)=>S.querySelector(`[data-st="${i}"]`).value=s);
+ ['ov','res','ana'].forEach(k=>S.querySelector('#tx_'+k).value=rep[k]);
+ const mapUrl=()=>'https://maps.google.com/maps?q='+encodeURIComponent(rep.addr||'日本')+'&output=embed&hl=ja';
+ const showMap=()=>{const b=S.querySelector('#r_mapbox');b.style.display='block';b.innerHTML=`<iframe src="${mapUrl()}" style="width:100%;height:240px;border:1px solid var(--bd);border-radius:8px" referrerpolicy="no-referrer" loading="lazy"></iframe><div style="font-size:12px;color:var(--mut);margin:4px 0">場所を探し、表示された住所をコピーして「📋 貼り付け」を押してください。</div><div class="row"><button id="r_mapup">地図を更新</button><button id="r_gm">Googleマップアプリ／ブラウザで開く</button></div>`};
+ S.oninput=e=>{const t=e.target,d=t.dataset;
+  if(t.id==='r_date')setDate(t.value);else if(t.id==='r_name')setSite(t.value);
+  else if(t.id==='r_addr')rep.addr=t.value;else if(t.id==='r_sdate')rep.sdate=t.value;else if(t.id==='r_mx')rep.mx=t.value;
+  else if(d.st!=null)rep.staff[+d.st]=t.value;else if(d.vc!=null)rep.vend[+d.vc].c=t.value;else if(d.vn!=null)rep.vend[+d.vn].n=t.value;
+  else if(d.mt!=null)rep.mt=REP_MT.filter(x=>x===d.mt?t.checked:rep.mt.includes(x));
+  else if(d.tx)rep[d.tx]=t.value;else return;
+  repRedraw();};
+ S.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.id==='r_ok'){closeModal()}
+  else if(b.id==='r_map'||b.id==='r_mapup')showMap();
+  else if(b.id==='r_gm')window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(rep.addr||'日本'),'_blank','noopener');
+  else if(b.id==='r_paste'){try{let t=(await navigator.clipboard.readText()).trim().replace(/^日本[、,]\s*/,'').replace(/[、,]\s*日本$/,'');if(!t)throw 0;rep.addr=t;S.querySelector('#r_addr').value=t;repRedraw();if(S.querySelector('#r_mapbox').style.display==='block')showMap();toast('住所を貼り付けました')}catch(x){toast('貼り付けできません。住所欄を長押しして貼り付けてください')}}
+  else if(b.id==='vadd'){if(rep.vend.length<4){rep.vend.push({c:'',n:''});S.querySelector('#vbox').innerHTML=vh();repRedraw()}}
+  else if(b.id==='vdel'){if(rep.vend.length>1){rep.vend.pop();S.querySelector('#vbox').innerHTML=vh();repRedraw()}else{rep.vend[0]={c:'',n:''};S.querySelector('#vbox').innerHTML=vh();repRedraw()}}
+  else if(b.dataset.bz){const k=b.dataset.bz,box=S.querySelector('#ai_'+k);if(!rep[k].trim())return toast('文章を入力してください');
+   const r=bizConv(rep[k]);if(!r.n||r.t===rep[k])return toast('変換する箇所はありませんでした');
+   const old=rep[k];rep[k]=r.t;S.querySelector('#tx_'+k).value=r.t;repRedraw();box._old=old;
+   box.innerHTML='<div style="font-size:12px;color:var(--mut);margin:6px 0">'+r.n+'箇所を変換しました（ひらがな→漢字、口語→ビジネス表現、常体→敬体）</div><button data-undo="'+k+'" style="padding:8px">↩ 変換前に戻す</button>';toast('文章を構成しました')}
+  else if(b.dataset.cp||b.dataset.gm){const k=b.dataset.cp||b.dataset.gm;if(!rep[k].trim())return toast('コピーする文章を入力してください');
+   const ok=copySync(rep[k].replace(/\s+$/,'')+GEM_REQ);toast(ok?(b.dataset.gm?'コピーしました。Geminiに貼り付けてください':'校正依頼文つきでコピーしました'):'コピーできませんでした');
+   if(b.dataset.gm)window.open('https://gemini.google.com/app','_blank','noopener')}
+  else if(b.dataset.pt){const k=b.dataset.pt,box=S.querySelector('#ai_'+k);
+   try{let t=(await navigator.clipboard.readText()).replace(/\r/g,'').trim();if(!t)throw 0;const old=rep[k];rep[k]=t;S.querySelector('#tx_'+k).value=t;repRedraw();
+    box.innerHTML='<button data-undo="'+k+'" style="padding:8px">↩ 貼り付け前に戻す</button>';box._old=old;toast('貼り付けました')}catch(x){toast('貼り付けできません。入力欄を長押しして貼り付けてください')}}
+  else if(b.dataset.undo){const k=b.dataset.undo,box=S.querySelector('#ai_'+k);rep[k]=box._old||'';S.querySelector('#tx_'+k).value=rep[k];box.innerHTML='';repRedraw();toast('元に戻しました')}
+  else if(b.dataset.ai){const k=b.dataset.ai,box=S.querySelector('#ai_'+k);if(!rep[k].trim())return toast('校正する文章を入力してください');
+   b.disabled=true;box.innerHTML='<div style="font-size:13px;color:var(--mut)">校正中…</div>';
+   const r=await aiProof(rep[k],k);b.disabled=false;box._r=[r.a,r.b];
+   box.innerHTML=[['案1：誤字脱字・表記のみ最小限に修正',r.a],['案2：お客様向けに自然で読みやすく整える',r.b]].map(([h,t],i)=>`<div style="border:1px solid var(--bd);border-radius:8px;padding:8px;margin-top:6px"><div style="font-size:12px;color:var(--mut)">${h}</div><div style="white-space:pre-wrap;margin:6px 0;font-size:14px">${esc(t)}</div>${numWarn(rep[k],t)}<button class="p" data-use="${k}" data-i="${i}" style="padding:8px">この案を採用</button></div>`).join('')+(r.note?`<div style="font-size:12px;color:var(--mut);margin-top:4px">${r.note}</div>`:'')}
+  else if(b.dataset.use){const k=b.dataset.use,box=S.querySelector('#ai_'+k);rep[k]=box._r[+b.dataset.i];S.querySelector('#tx_'+k).value=rep[k];box.innerHTML='';repRedraw();toast('校正文を反映しました')}
+ };
+ if(f==='r_addr')showMap();
+ setTimeout(()=>{const e=S.querySelector('#'+f);if(e){e.scrollIntoView({block:'center'});if(f!=='r_date'&&f!=='r_sdate')e.focus({preventScroll:true})}},60);
 }
 
 /* ---------- photo drag swap ---------- */
@@ -728,8 +909,11 @@ $('#view').onchange=e=>{
  spIdx=Math.floor(cur/viewN());active=selS=null;$('#sp').classList.remove('show');render();
 };
 $('#cov').onchange=e=>{cover.on=e.target.checked;$('#covf').classList.toggle('show',cover.on);render()};
-$('#cname').oninput=e=>{cover.name=e.target.value;updateCover()};
-$('#cdate').oninput=e=>{cover.date=e.target.value;updateCover()};
+$('#cname').oninput=e=>setSite(e.target.value);
+$('#cdate').oninput=e=>setDate(e.target.value);
+$('#rdate').oninput=e=>setDate(e.target.value);
+$('#rep').onchange=e=>{rep.on=e.target.checked;$('#repf').classList.toggle('show',rep.on);render();scheduleSave()};
+$('#repEdit').onclick=()=>openRep('r_name');
 $('#pnum').onchange=e=>{showNum=e.target.checked;render()};
 $('#lay').onchange=e=>{
  const flat=pages.flatMap(p=>p.slots),n=e.target.value;
@@ -907,6 +1091,7 @@ $('#pdf').onclick=async()=>{
   try{await logoImg.decode()}catch(x){}
   let n=0;
   if(cover.on){const c=document.createElement('canvas');c.width=595*k;c.height=842*k;drawCover(c.getContext('2d'),k);pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',0,0,595,842);n=1}
+  if(rep.on){const c=document.createElement('canvas');c.width=595*k;c.height=842*k;repDraw(c.getContext('2d'),k,false);if(n++)pdf.addPage();pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',0,0,595,842)}
   for(let i=0;i<pages.length;i++){
    const c=document.createElement('canvas');c.width=595*k;c.height=842*k;drawPage(c.getContext('2d'),pages[i],i,k);
    if(n++)pdf.addPage();pdf.addImage(c.toDataURL('image/jpeg',.92),'JPEG',0,0,595,842);await new Promise(r=>setTimeout(r));
@@ -966,7 +1151,7 @@ function isEmptyWork(){return !projName&&!(cover.name||'').trim()&&pages.every(p
 function buildDoc(){
  const iids=new Set();
  const pg=pages.map(p=>({slots:p.slots.map(s=>{const iid=s.img?idOf(s.img):null;if(iid)iids.add(iid);return{iid,text:s.text,shapes:s.shapes}})}));
- return{id:curId,name:projName,created:projCreated,layout,showNum,cover:{on:cover.on,name:cover.name,date:cover.date},pages:pg,iids:[...iids]};
+ return{id:curId,name:projName,created:projCreated,layout,showNum,cover:{on:cover.on,name:cover.name,date:cover.date},rep:JSON.parse(JSON.stringify(rep)),pages:pg,iids:[...iids]};
 }
 const sigOf=d=>JSON.stringify({...d,created:0});
 function scheduleSave(){if(!db||suspend)return;clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,700)}
@@ -995,7 +1180,7 @@ addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')
 addEventListener('pagehide',()=>{clearTimeout(saveTimer);saveNow()});
 
 const loadEl=src=>new Promise((res,rej)=>{const e=new Image();e.onload=()=>res(e);e.onerror=()=>rej(new Error('img'));e.src=src});
-function syncInputs(){$('#lay').value=layout;$('#pnum').checked=showNum;$('#cov').checked=cover.on;$('#covf').classList.toggle('show',cover.on);$('#cname').value=cover.name;$('#cdate').value=cover.date}
+function syncInputs(){$('#lay').value=layout;$('#pnum').checked=showNum;$('#cov').checked=cover.on;$('#covf').classList.toggle('show',cover.on);$('#cname').value=cover.name;$('#cdate').value=cover.date;$('#rep').checked=rep.on;$('#repf').classList.toggle('show',rep.on);$('#rdate').value=cover.date}
 async function getImages(doc){const out={},st=db.transaction('images').objectStore('images');await Promise.all((doc.iids||[]).map(iid=>rq(st.get(doc.id+'|'+iid)).then(v=>{out[iid]=v}).catch(()=>{})));return out}
 async function applyProject(doc,imgs,asNew){
  suspend=true;
@@ -1017,7 +1202,7 @@ async function applyProject(doc,imgs,asNew){
   pages=built.length?built:[newPage()];
   uid=1+Math.max(0,...pages.flatMap(p=>p.slots.flatMap(s=>s.shapes.map(x=>x.id||0))));
   active=selS=null;spIdx=doc.spIdx||0;$('#sp').classList.remove('show');
-  projName=doc.name||'';syncInputs();
+  projName=(doc.name||'').trim()||(cover.name||'').trim();cover.name=projName;repSet(doc.rep);syncInputs();
   if(asNew){curId=newId();projCreated=Date.now();savedIids=new Set();lastSig=''}
   else{curId=doc.id;projCreated=doc.created||Date.now();savedIids=new Set(doc.iids||[])}
   render();
@@ -1029,7 +1214,7 @@ async function applyProject(doc,imgs,asNew){
 function resetState(){
  suspend=true;
  pages=[newPage()];Object.assign(cover,{on:false,name:'',date:iso(new Date())});
- projName='';curId=null;savedIids=new Set();lastSig='';lastTime='';active=selS=null;spIdx=0;$('#sp').classList.remove('show');syncInputs();render();
+ repSet();projName='';curId=null;savedIids=new Set();lastSig='';lastTime='';active=selS=null;spIdx=0;$('#sp').classList.remove('show');syncInputs();render();
  suspend=false;updProjUI();setStat('');
 }
 async function initStorage(){
@@ -1091,8 +1276,8 @@ async function openProjects(){
  <div class="row"><button id="pExp">編集中の現場をJSON保存</button><button id="pImp">JSONから読み込み</button></div>
  <button id="pClose">閉じる</button>`);
  $('#pClose').onclick=closeModal;
- $('#pNew').onclick=()=>askText('新しい現場の名前（工事名）','',async v=>{await flushSave();resetState();projName=v.trim();if(projName){cover.name=projName;syncInputs()}updProjUI();await saveNow();toast('新しい現場を作成しました')});
- $('#pRen').onclick=()=>askText('現場の名前を変更',dispName(),v=>{projName=v.trim();updProjUI();saveNow()});
+ $('#pNew').onclick=()=>askText('新しい現場の名前（工事名）','',async v=>{await flushSave();resetState();setSite(v.trim());syncInputs();await saveNow();toast('新しい現場を作成しました')});
+ $('#pRen').onclick=()=>askText('現場の名前を変更',dispName(),v=>{setSite(v.trim());saveNow()});
  $('#pExp').onclick=()=>{closeModal();exportProject()};
  $('#pImp').onclick=()=>{closeModal();$('#fProj').click()};
  $('#plist').onclick=async e=>{
@@ -1114,6 +1299,40 @@ async function openProjects(){
  };
 }
 $('#proj').onclick=openProjects;
+/* ---------- キャッシュ整理 ---------- */
+const fmtB=n=>n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(0,Math.round(n/1024))+' KB';
+async function storeUse(){try{return (await navigator.storage.estimate()).usage||0}catch(x){return null}}
+async function openCache(){
+ await flushSave();const u=await storeUse();let n=0;
+ if(db){try{n=await rq(db.transaction('projects').objectStore('projects').count())}catch(x){}}
+ modal(`<div style="font-weight:700;font-size:16px">🧹 キャッシュ整理</div>
+ <div style="font-size:14px;line-height:1.7">端末の使用容量：<b>${u==null?'不明':fmtB(u)}</b>　保存済みの現場：<b>${n}件</b></div>
+ <div style="font-size:12px;color:var(--mut);line-height:1.7">・どの現場にも属さない不要な写真データを削除します<br>・使い終わった写真のメモリ領域を解放します<br>・ブラウザの一時キャッシュを消去します<br><b style="color:var(--fg)">保存済みの現場・写真・入力内容は消えません。</b></div>
+ <div id="cres" style="font-size:14px;line-height:1.7"></div>
+ <div class="row"><button id="cGo" class="p">整理する</button><button id="cX">閉じる</button></div>`);
+ $('#cX').onclick=closeModal;
+ $('#cGo').onclick=async()=>{
+  const b=$('#cGo');b.disabled=true;b.textContent='整理中…';let rm=0,bytes=0,mem=0,cc=0,err=false;
+  try{
+   const cur0=buildDoc();
+   if(db){
+    const ps=await rq(db.transaction('projects').objectStore('projects').getAll()),ok=new Set();
+    ps.forEach(d=>(d.iids||[]).forEach(i=>ok.add(d.id+'|'+i)));
+    if(curId)cur0.iids.forEach(i=>ok.add(curId+'|'+i));
+    const t=db.transaction('images','readwrite'),st=t.objectStore('images');
+    await new Promise((res,rej)=>{const c=st.openCursor();c.onerror=()=>rej(c.error);c.onsuccess=()=>{const k=c.result;if(!k)return res();if(!ok.has(String(k.key))){rm++;const v=k.value;bytes+=typeof v==='string'?v.length:(v&&v.size)||0;k.delete()}k.continue()}});
+    await txDone(t);
+   }
+   const keep=new Set(cur0.iids);
+   for(const[id,src]of[...imgById]){if(!keep.has(id)){imgById.delete(id);imgIdOf.delete(src);mem++}}
+   if(window.caches){for(const k of await caches.keys()){await caches.delete(k);cc++}}
+  }catch(x){err=true}
+  const u2=await storeUse();
+  $('#cres').innerHTML=err?'<span style="color:#d00">整理中にエラーが発生しました。保存済みのデータは変更されていません。</span>':`✅ 整理が完了しました<br>不要な写真データ：${rm}件（約${fmtB(bytes)}）を削除<br>メモリ解放：${mem}件　一時キャッシュ：${cc}件消去<br>現在の使用容量：<b>${u2==null?'不明':fmtB(u2)}</b>`;
+  b.textContent='整理する';b.disabled=false;
+ };
+}
+$('#cacheClean').onclick=openCache;
 render();initStorage();
 /* ---------- 上部タブ ---------- */
 (function(){
